@@ -3,7 +3,7 @@ import {
   Home, Trophy, Wind, Heart, Users, Flame, Sparkles, Award, Check, Plus, Trash2,
   Phone, X, ChevronRight, ChevronDown, Dumbbell, MessageSquare, Target, BookOpen,
   HandHeart, Star, CloudRain, Send, Lock, Clock, DollarSign, Zap,
-  Settings, RotateCcw, Anchor, LifeBuoy, ChevronLeft
+  Settings, RotateCcw, Anchor, LifeBuoy, ChevronLeft, Gift, Volume2, VolumeX
 } from "lucide-react";
 
 /* =========================================================
@@ -98,7 +98,21 @@ input[type=checkbox]{accent-color:var(--indigo);width:19px;height:19px}
 input[type=date],input[type=number]{color-scheme:dark}
 details summary::-webkit-details-marker{display:none}
 
-@media (prefers-reduced-motion:reduce){.aurora,.fade,.pop,.xp-float{animation:none!important}}
+.switch{width:46px;height:27px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.08);
+  position:relative;cursor:pointer;flex-shrink:0;transition:background .18s,border-color .18s;padding:0}
+.switch::after{content:'';position:absolute;top:2px;left:2px;width:21px;height:21px;border-radius:50%;background:#fff;
+  transition:transform .18s cubic-bezier(.22,1,.36,1);box-shadow:0 2px 6px rgba(0,0,0,.3)}
+.switch.on{background:linear-gradient(135deg,#5C67FF,#4038E0);border-color:transparent}
+.switch.on::after{transform:translateX(19px)}
+
+@keyframes chestFloat{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-7px) rotate(1deg)}}
+.chest-bounce{animation:chestFloat 2.4s ease-in-out infinite}
+@keyframes glowPulse{0%,100%{opacity:.55}50%{opacity:1}}
+.glow-pulse{animation:glowPulse 1.8s ease-in-out infinite}
+@keyframes slideDown{from{opacity:0;transform:translate(-50%,-16px)}to{opacity:1;transform:translate(-50%,0)}}
+.slide-down{animation:slideDown .38s cubic-bezier(.22,1,.36,1) both}
+
+@media (prefers-reduced-motion:reduce){.aurora,.fade,.pop,.xp-float,.chest-bounce,.glow-pulse,.slide-down{animation:none!important}}
 `;
 
 /* ---------------- content ---------------- */
@@ -223,6 +237,7 @@ const BLANK = {
   quitDate: null, dailySpend: 0, xp: 0, awarded: [], goals: [], checkins: [], posts: [],
   pledgeDates: [], loginDates: [], breathSessions: [], manualChallenges: [], readDates: [],
   notifiedMilestones: [], earnedAchievements: [], reasons: [], resets: [],
+  perfectDates: [], chestDates: [], soundOn: true,
 };
 
 async function load() {
@@ -232,6 +247,94 @@ async function load() {
 }
 async function save(d) {
   try { localStorage.setItem(KEY, JSON.stringify(d)); } catch (e) { console.error("storage", e); }
+}
+
+/* ---------------- sound ---------------- */
+let audioCtx;
+function ensureAudio() {
+  try {
+    if (!audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) audioCtx = new Ctx();
+    }
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  } catch (e) { return null; }
+}
+function playChime(freqs, dur = 0.16, type = "sine", gain = 0.05) {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  freqs.forEach((f, i) => {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type; osc.frequency.value = f;
+    osc.connect(g); g.connect(ctx.destination);
+    const t0 = ctx.currentTime + i * 0.07;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.start(t0); osc.stop(t0 + dur + 0.03);
+  });
+}
+const CHIMES = {
+  spark: () => playChime([880], 0.14, "sine", 0.05),
+  level: () => playChime([523.25, 659.25, 783.99, 1046.5], 0.2, "triangle", 0.07),
+  achievement: () => playChime([659.25, 987.77, 1318.51], 0.2, "triangle", 0.06),
+  milestone: () => playChime([440, 659.25, 880, 1174.7], 0.24, "triangle", 0.07),
+  perfect: () => playChime([783.99, 987.77, 1318.51], 0.2, "sine", 0.06),
+  chest: () => playChime([659.25, 987.77], 0.16, "square", 0.045),
+};
+
+/* ---------------- confetti ---------------- */
+function Confetti({ trigger }) {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    if (!trigger) return;
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const canvas = canvasRef.current;
+    if (!canvas || reduce) return;
+    const ctx = canvas.getContext("2d");
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = window.innerWidth * dpr;
+    canvas.height = window.innerHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const colors = ["#5C67FF", "#8B5CF6", "#1FBFD4", "#F5B942", "#22C55E", "#E4573D"];
+    const cx = window.innerWidth / 2;
+    const particles = Array.from({ length: 64 }, () => ({
+      x: cx + (Math.random() - 0.5) * 140,
+      y: window.innerHeight * 0.32,
+      vx: (Math.random() - 0.5) * 8.5,
+      vy: -Math.random() * 8 - 3,
+      g: 0.26 + Math.random() * 0.14,
+      size: 5 + Math.random() * 5,
+      color: colors[(Math.random() * colors.length) | 0],
+      rot: Math.random() * Math.PI * 2,
+      vr: (Math.random() - 0.5) * 0.35,
+    }));
+    let raf, start;
+    const DURATION = 1300;
+    const tick = (t) => {
+      if (!start) start = t;
+      const elapsed = t - start;
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+      const life = Math.max(0, 1 - elapsed / DURATION);
+      particles.forEach((p) => {
+        p.vy += p.g; p.x += p.vx; p.y += p.vy; p.rot += p.vr;
+        ctx.save();
+        ctx.globalAlpha = life;
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+        ctx.restore();
+      });
+      if (elapsed < DURATION) raf = requestAnimationFrame(tick);
+      else ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); ctx.clearRect(0, 0, window.innerWidth, window.innerHeight); };
+  }, [trigger]);
+  return <canvas ref={canvasRef} style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 85 }} aria-hidden="true" />;
 }
 
 /* ---------------- small pieces ---------------- */
@@ -308,7 +411,7 @@ function TopBar({ xp, streak, onProfile, onSettings }) {
 }
 
 /* ---------------- settings sheet ---------------- */
-function SettingsSheet({ d, onSave, onReset, onClose }) {
+function SettingsSheet({ d, onSave, onReset, onClose, onToggleSound }) {
   const [date, setDate] = useState(d.quitDate);
   const [spend, setSpend] = useState(String(d.dailySpend || ""));
   const [confirmReset, setConfirmReset] = useState(false);
@@ -330,6 +433,17 @@ function SettingsSheet({ d, onSave, onReset, onClose }) {
         <button className="btn" style={{ marginTop: 18 }} onClick={() => { onSave(date, Number(spend) || 0); onClose(); }}>Save changes</button>
 
         <div style={{ height: 1, background: "var(--line)", margin: "22px 0 18px" }} />
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {d.soundOn ? <Volume2 size={17} color="var(--indigo-lt)" /> : <VolumeX size={17} color="var(--soft)" />}
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 600, fontSize: 14.5 }}>Sound effects</div>
+            <div style={{ fontSize: 12, color: "var(--soft)" }}>Chimes for sparks, levels, and chests</div>
+          </div>
+          <button className={`switch${d.soundOn ? " on" : ""}`} role="switch" aria-checked={d.soundOn} aria-label="Toggle sound effects" onClick={() => onToggleSound(!d.soundOn)} />
+        </div>
+
+        <div style={{ height: 1, background: "var(--line)", margin: "18px 0" }} />
 
         <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 600, fontSize: 15.5, marginBottom: 6 }}>Start the count again</div>
         <p style={{ fontSize: 13, color: "var(--soft)", lineHeight: 1.6, margin: "0 0 14px" }}>
@@ -525,7 +639,7 @@ function Onboarding({ onDone }) {
 }
 
 /* ---------------- HOME ---------------- */
-function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead, setReasons, openReadings, go, openCrisis }) {
+function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead, onOpenChest, setReasons, openReadings, go, openCrisis }) {
   const next = MILESTONES.find((m) => m.d > days) || MILESTONES[MILESTONES.length - 1];
   const prev = [...MILESTONES].reverse().find((m) => m.d <= days);
   const lo = prev ? prev.d : 0;
@@ -537,6 +651,8 @@ function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead,
   const done = challengeState.filter((c) => c.done).length;
   const badges = MILESTONES.filter((m) => m.d <= days).length;
   const saved = Math.round(days * d.dailySpend);
+  const chestOpened = d.chestDates.includes(todayISO());
+  const perfectToday = challengeState.length > 0 && done === challengeState.length;
   const week = useMemo(() => {
     const out = []; const now = new Date(); const dow = now.getDay();
     for (let i = 0; i < 7; i++) { const x = new Date(now); x.setDate(now.getDate() - dow + i); out.push(x); }
@@ -601,11 +717,36 @@ function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead,
         {!pledged && <div className="pill" style={{ background: "rgba(245,185,66,.15)", border: "none", color: "#F5B942" }}>+20</div>}
       </button>
 
+      {/* mystery chest */}
+      <div className="card" style={{
+        padding: "16px 18px", marginBottom: 12, display: "flex", alignItems: "center", gap: 14,
+        background: chestOpened ? "var(--card)" : "linear-gradient(135deg,rgba(245,185,66,.14),rgba(217,122,15,.08))",
+        border: chestOpened ? "1px solid var(--line)" : "1px solid rgba(245,185,66,.35)",
+      }}>
+        <div className={chestOpened ? "" : "chest-bounce"} style={{
+          width: 46, height: 46, borderRadius: 15, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+          background: chestOpened ? "rgba(255,255,255,.05)" : "linear-gradient(135deg,#F5B942,#D97A0F)",
+        }}>
+          <Gift size={22} color={chestOpened ? "#5B6798" : "#221703"} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 600, fontSize: 15, color: chestOpened ? "var(--text)" : "#F5B942" }}>
+            {chestOpened ? "Chest opened today" : "Today's mystery chest"}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--soft)" }}>
+            {chestOpened ? "A fresh one unlocks tomorrow" : "Tap for a surprise spark bonus"}
+          </div>
+        </div>
+        {!chestOpened && <button className="btn" style={{ width: "auto", padding: "10px 18px" }} onClick={onOpenChest}>Open</button>}
+      </div>
+
       {/* daily challenges */}
       <div className="card" style={{ padding: "18px 18px 8px", marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
           <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 19, marginRight: "auto" }}>Daily Challenges</div>
-          <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--soft)" }}>{done} of {challengeState.length} done</div>
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: perfectToday ? "#22C55E" : "var(--soft)" }}>
+            {perfectToday ? "Perfect day ✓" : `${done} of ${challengeState.length} done`}
+          </div>
         </div>
         <div className="seg" style={{ marginBottom: 6 }}>
           <div style={{ width: `${(done / challengeState.length) * 100}%`, background: "linear-gradient(90deg,#5C67FF,#22C55E)" }} />
@@ -836,11 +977,12 @@ function QuestsTab({ d, days, goals, setGoals }) {
       </div>
 
       {/* streaks */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         {[["Login streak", streakOf(d.loginDates), Flame, "#F5B942"],
           ["Pledge streak", streakOf(d.pledgeDates), HandHeart, "#8B5CF6"],
-          ["Check-in streak", streakOf(d.checkins.map((c) => c.date)), MessageSquare, "#1FBFD4"]].map(([l, v, Ic, c]) => (
-          <div className="tile" key={l}>
+          ["Check-in streak", streakOf(d.checkins.map((c) => c.date)), MessageSquare, "#1FBFD4"],
+          ["Perfect streak", streakOf(d.perfectDates), Zap, "#22C55E"]].map(([l, v, Ic, c]) => (
+          <div className="tile" key={l} style={{ minWidth: 84 }}>
             <Ic size={15} color={c} />
             <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 18, marginTop: 3 }}>{v}</div>
             <div style={{ fontSize: 9.5, color: "var(--soft)", fontWeight: 600 }}>{l.toUpperCase()}</div>
@@ -1120,6 +1262,8 @@ export default function App() {
   const [readings, setReadings] = useState(false);
   const [levelUp, setLevelUp] = useState(null);
   const [toast, setToast] = useState(null);
+  const [achieveToast, setAchieveToast] = useState(null);
+  const [burst, setBurst] = useState(0);
   const [live, setLive] = useState({ h: 0, m: 0, s: 0 });
 
   useEffect(() => { load().then((x) => { setD(x); setLoading(false); }); }, []);
@@ -1140,14 +1284,20 @@ export default function App() {
   const days = d.quitDate ? Math.max(0, daysBetween(new Date(d.quitDate + "T00:00:00"), new Date())) : 0;
 
   /* award xp once per key */
-  const award = useCallback((base, amount, key, label) => {
+  const award = useCallback((base, amount, key, label, kind = "spark") => {
     if (base.awarded.includes(key)) return base;
     const before = levelOf(base.xp);
     const next = { ...base, xp: base.xp + amount, awarded: [...base.awarded, key] };
     const after = levelOf(next.xp);
     setToast({ id: Date.now(), amount, label });
     setTimeout(() => setToast(null), 1200);
-    if (after.level > before.level) setTimeout(() => setLevelUp(after), 400);
+    if (base.soundOn) CHIMES[kind]?.();
+    if (kind !== "spark") setBurst((b) => b + 1);
+    if (after.level > before.level) {
+      setTimeout(() => setLevelUp(after), 400);
+      setTimeout(() => setBurst((b) => b + 1), 420);
+      if (base.soundOn) setTimeout(() => CHIMES.level(), 400);
+    }
     return next;
   }, []);
 
@@ -1172,10 +1322,23 @@ export default function App() {
       posts: [...fresh.map((m) => ({ id: Date.now() + m.d, date: new Date().toISOString(), text: `${m.label} sober. Another one in the log — on to the next.`, tag: null, milestone: true })), ...d.posts],
       notifiedMilestones: [...d.notifiedMilestones, ...fresh.map((m) => m.d)],
     };
-    fresh.forEach((m) => { next = award(next, 100, `ms:${m.d}`, `${m.label} milestone`); });
+    fresh.forEach((m) => { next = award(next, 100, `ms:${m.d}`, `${m.label} milestone`, "milestone"); });
     persist(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, loading]);
+
+  /* achievement unlocks */
+  useEffect(() => {
+    if (loading || !d.quitDate) return;
+    const fresh = ACHIEVEMENTS.filter((a) => a.test(d) && !d.earnedAchievements.includes(a.id));
+    if (!fresh.length) return;
+    let next = { ...d, earnedAchievements: [...d.earnedAchievements, ...fresh.map((a) => a.id)] };
+    fresh.forEach((a) => { next = award(next, 50, `ach:${a.id}`, a.label, "achievement"); });
+    setAchieveToast({ id: Date.now(), label: fresh[0].label });
+    setTimeout(() => setAchieveToast(null), 2600);
+    persist(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.xp, d.pledgeDates.length, d.breathSessions.length, d.checkins.length, d.loginDates.length, d.goals, loading]);
 
   /* challenge state (auto-detect + manual) */
   const challengeState = useMemo(() => {
@@ -1193,6 +1356,18 @@ export default function App() {
       return { ...c, done };
     });
   }, [d]);
+
+  /* perfect-day bonus: every daily challenge cleared */
+  useEffect(() => {
+    if (loading || !d.quitDate || !challengeState.length) return;
+    const t = todayISO();
+    if (d.perfectDates.includes(t)) return;
+    if (challengeState.some((c) => !c.done)) return;
+    let next = { ...d, perfectDates: [...d.perfectDates, t] };
+    next = award(next, 30, `perfect:${t}`, "Perfect day", "perfect");
+    persist(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challengeState, loading]);
 
   /* actions */
   const t = todayISO();
@@ -1217,6 +1392,12 @@ export default function App() {
     persist(award({ ...d, checkins: [entry, ...rest].sort((a, b) => (a.date < b.date ? 1 : -1)) }, 25, `checkin:${entry.date}`, "Check-in logged"));
   };
   const doPost = () => persist(award({ ...d }, 20, `post:${t}`, "Shared a win"));
+  const doChest = () => {
+    if (d.chestDates.includes(t)) return;
+    const amount = 10 + Math.floor(Math.random() * 31);
+    persist(award({ ...d, chestDates: [...d.chestDates, t] }, amount, `chest:${t}`, "Mystery chest", "chest"));
+  };
+  const toggleSound = (on) => persist({ ...d, soundOn: on });
   const setGoals = (goals) => {
     const newlyDone = goals.filter((g) => g.done && !d.goals.find((x) => x.id === g.id && x.done));
     let next = { ...d, goals };
@@ -1236,14 +1417,20 @@ export default function App() {
   if (loading) return <div className="root"><style>{CSS}</style></div>;
   if (!d.quitDate) return (<><style>{CSS}</style><Onboarding onDone={(date, spend) => persist({ ...d, quitDate: date, dailySpend: spend })} /></>);
 
+  const lv = levelOf(d.xp);
+
   return (
     <div className="root" style={{ display: "flex", flexDirection: "column" }}>
       <style>{CSS}</style>
       <div className="aurora" />
+      <Confetti trigger={burst} />
       <div style={{ flex: 1, maxWidth: 480, margin: "0 auto", width: "100%", position: "relative", zIndex: 2 }}>
         <TopBar xp={d.xp} streak={streakOf(d.loginDates)} onProfile={() => setTab("quests")} onSettings={() => setSettings(true)} />
+        <div style={{ height: 3, background: "rgba(255,255,255,.07)", margin: "0 18px 10px" }} title={`Level ${lv.level} · ${lv.into}/${lv.span} to ${lv.next ? lv.next.name : "max level"}`}>
+          <div style={{ height: "100%", width: `${lv.pct * 100}%`, background: "linear-gradient(90deg,#5C67FF,#8B5CF6)", borderRadius: 999, transition: "width .6s cubic-bezier(.22,1,.36,1)" }} />
+        </div>
         {tab === "home" && <HomeTab d={d} days={days} live={live} challengeState={challengeState}
-          onChallenge={doChallenge} onPledge={doPledge} onRead={doRead} setReasons={setReasons}
+          onChallenge={doChallenge} onPledge={doPledge} onRead={doRead} onOpenChest={doChest} setReasons={setReasons}
           openReadings={() => setReadings(true)} go={setTab} openCrisis={() => setCrisis(true)} />}
         {tab === "quests" && <QuestsTab d={d} days={days} goals={d.goals} setGoals={setGoals} />}
         {tab === "breathe" && <BreatheTab sessions={d.breathSessions} onComplete={doBreath} />}
@@ -1272,8 +1459,22 @@ export default function App() {
           <Zap size={15} /> +{toast.amount} · {toast.label}
         </div>
       )}
+      {achieveToast && (
+        <div key={achieveToast.id} className="slide-down" style={{
+          position: "fixed", top: 14, left: "50%", zIndex: 75, maxWidth: 380, width: "calc(100% - 32px)",
+          background: "linear-gradient(135deg,#F5B942,#D97A0F)", color: "#221703", padding: "12px 16px",
+          borderRadius: 16, display: "flex", alignItems: "center", gap: 10,
+          boxShadow: "0 16px 34px -14px rgba(245,185,66,.85)",
+        }}>
+          <Trophy size={20} />
+          <div>
+            <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 13.5 }}>Achievement unlocked</div>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>{achieveToast.label} · +50 sparks</div>
+          </div>
+        </div>
+      )}
       {levelUp && <LevelUp lv={levelUp} onClose={() => setLevelUp(null)} />}
-      {settings && <SettingsSheet d={d} onSave={saveSettings} onReset={resetTimer} onClose={() => setSettings(false)} />}
+      {settings && <SettingsSheet d={d} onSave={saveSettings} onReset={resetTimer} onClose={() => setSettings(false)} onToggleSound={toggleSound} />}
       {readings && <ReadingsSheet onClose={() => setReadings(false)} />}
       {crisis && <Crisis onClose={() => setCrisis(false)} />}
     </div>
