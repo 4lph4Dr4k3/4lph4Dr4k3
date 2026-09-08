@@ -1,16 +1,24 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Home, Trophy, Wind, Heart, Users, Flame, Sparkles, Award, Check, Plus, Trash2,
-  Phone, X, ChevronRight, ChevronDown, Dumbbell, MessageSquare, Target, BookOpen,
-  HandHeart, Star, CloudRain, Send, Lock, Clock, DollarSign, Zap,
-  Settings, RotateCcw, Anchor, LifeBuoy, ChevronLeft, Gift, Volume2, VolumeX
+  Phone, X, ChevronRight, ChevronDown, MessageSquare, HandHeart, Star, Send, Lock,
+  Clock, DollarSign, Zap, Settings, RotateCcw, Anchor, Gift, Volume2, VolumeX,
+  Compass, Share2,
 } from "lucide-react";
+import {
+  JOURNEY_TYPES, MILESTONES, READINGS, QUOTES, PRACTICES, ACHIEVEMENTS, BREATH_PRESETS,
+  TAGS, MOODS, SLEEP, CHEST_BADGES, pickChestReward,
+  todayISO, isoOf, dayIdx, fmtDate, daysSince, streakOf, levelOf, todaysChallenges, uid,
+} from "./game.js";
+import { load, save, newJourney } from "./storage.js";
+import { CHIMES } from "./sound.js";
+import { CARD_SIZE, drawRewardCard, shareOrDownload } from "./cards.js";
 
 /* =========================================================
    STEADY — one day at a time
    Navy/indigo recovery companion with a full gamification
-   layer: XP + levels, daily challenges, streaks, badges,
-   and animated breathing exercises.
+   layer: multi-journey tracking, XP + levels, daily practices,
+   a mystery chest, streaks, badges, and breathing exercises.
 ========================================================= */
 
 const CSS = `
@@ -52,6 +60,7 @@ body{margin:0}
 .btn-soft{background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--text);border-radius:16px;
   font-family:'Inter',sans-serif;font-weight:600;font-size:14px;padding:13px 16px;cursor:pointer;width:100%;transition:.15s}
 .btn-soft:hover{background:rgba(255,255,255,.11)} .btn-soft:active{transform:scale(.975)}
+.btn-soft:disabled{opacity:.4;cursor:not-allowed}
 
 .pill{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.07);border:1px solid var(--line);
   border-radius:999px;padding:7px 13px;font-size:12.5px;font-weight:600;color:var(--text)}
@@ -114,176 +123,6 @@ details summary::-webkit-details-marker{display:none}
 
 @media (prefers-reduced-motion:reduce){.aurora,.fade,.pop,.xp-float,.chest-bounce,.glow-pulse,.slide-down{animation:none!important}}
 `;
-
-/* ---------------- content ---------------- */
-const MILESTONES = [
-  { d: 1, label: "24 Hours" }, { d: 7, label: "1 Week" }, { d: 30, label: "30 Days" },
-  { d: 60, label: "60 Days" }, { d: 90, label: "90 Days" }, { d: 180, label: "6 Months" },
-  { d: 365, label: "1 Year" }, { d: 545, label: "18 Months" }, { d: 730, label: "2 Years" },
-  { d: 1095, label: "3 Years" }, { d: 1825, label: "5 Years" },
-];
-
-const LEVELS = [
-  { xp: 0, name: "Day One" }, { xp: 100, name: "Finding Footing" }, { xp: 250, name: "Steady Hands" },
-  { xp: 500, name: "Building Momentum" }, { xp: 850, name: "Rooted" }, { xp: 1300, name: "Resilient" },
-  { xp: 1900, name: "Anchored" }, { xp: 2700, name: "Lighthouse" }, { xp: 3800, name: "Unshaken" },
-  { xp: 5200, name: "Steady, Truly" },
-];
-
-const READINGS = [
-  { t: "Honesty first", b: "Most of what gets easier in recovery starts with telling the truth — to yourself, before anyone else. Not the whole truth all at once. Just today's version of it. What's true right now, in this hour, that you've been avoiding saying out loud?" },
-  { t: "The next right thing", b: "You don't have to see the whole road today. You just have to find the next right thing and do that. Make the call. Go to the meeting. Say no. Say yes. One decision at a time is a full-time job, and it's the only job today requires." },
-  { t: "Asking for help", b: "Asking for help isn't the failure — needing to ask and not doing it is. Every person who's stayed sober for any length of time has, at some point, said the sentence 'I don't think I can do this alone.' It's not weakness. It's the whole method." },
-  { t: "Cravings pass", b: "A craving is a wave, not a tide. It rises, it peaks, and — if you don't feed it — it goes back out. It rarely lasts more than twenty minutes at full strength. You are not being asked to want this feeling to end forever. Just to outlast the next twenty minutes." },
-  { t: "Shame keeps secrets", b: "Shame tells you to hide the thing that would actually get lighter the moment you said it out loud. Guilt says 'I did something bad.' Shame says 'I am something bad.' Recovery has room for guilt — it points somewhere. Shame just points at you. Put it down." },
-  { t: "Gratitude, small size", b: "You don't need a good day to find something to be grateful for. You need a specific one. Not 'my life' — a cup of coffee that was hot when you drank it. A text back. Five minutes of quiet. Gratitude works in small, exact coins, not large abstract ones." },
-  { t: "A slip is information", b: "If today didn't go the way you planned, that's data, not a verdict. What was happening in the hour before. Who you were with, or weren't. What you were avoiding. A setback has something to teach you that a clean stretch can't. Get curious before you get down on yourself." },
-  { t: "Boredom is a trigger too", b: "Not every trigger is a bad day. Sometimes it's an empty Tuesday afternoon with nothing scheduled and nowhere to be. Boredom isn't a small thing in recovery — it's one of the big ones. Keep something on the calendar, especially on the days that look easy." },
-  { t: "Routine is protective", b: "Structure isn't the fun part of getting sober, but it's some of the load-bearing part. A wake time, a meal, a meeting, a bedtime — none of it is glamorous. It's just fewer decisions left open for the part of your brain that used to make bad ones under pressure." },
-  { t: "Who you're becoming", b: "You're not just quitting something, you're growing into someone — and that person doesn't exist fully yet. Some days you'll feel like the old version. Some days you'll surprise yourself. Both are part of becoming, not proof that it isn't working." },
-  { t: "Service moves the weight", b: "One of the strange, reliable facts of recovery: helping another person carry their weight tends to lighten yours. It doesn't have to be dramatic. Answer a text. Show up early and stack chairs. Being useful to someone else is a good use of a hard day." },
-  { t: "Letting go of the outcome", b: "You can do everything right today and still feel restless, irritable, or low. Do it anyway. Recovery asks for your effort, not your certainty about how you'll feel afterward. The feeling is not the measure of whether the day counted." },
-  { t: "Connection over willpower", b: "Willpower is a rope; connection is a net. Rely only on the rope and eventually you're hanging on by fingers over a long drop. Build the net — people who know where you are, who you can call badly, at odd hours, without performing that you're fine." },
-  { t: "Today is the whole unit", b: "Not this year. Not the rest of your life. Today — this one, the one you're in right now. It's the only size the work actually comes in. Tomorrow will arrive with its own portion. You don't have to carry both at once." },
-];
-
-const QUOTES = [
-  "One day at a time.", "Progress, not perfection.", "This too shall pass.", "Easy does it.",
-  "You are not required to have this figured out today.",
-  "The opposite of addiction isn't sobriety. It's connection.",
-  "Small and steady beats big and rare.",
-  "You don't have to like it. You just have to do it today.",
-  "Ask for help before you need it, not after.",
-  "The day you're dreading is just a day with extra support around it.",
-  "Rest is not the same as quitting.", "You've survived every hard day you've had so far.",
-  "Keep the plans that are boring and small. They're the ones that hold.",
-  "Nobody recovers alone, even the people who look like they did.",
-];
-
-/* daily challenge pool — auto = detected from app activity */
-const CHALLENGES = [
-  { id: "pledge", label: "Take today's pledge", xp: 20, color: "#4F5BFF", Icon: HandHeart, auto: "pledge" },
-  { id: "breathe", label: "Complete a breathing session", xp: 25, color: "#1FBFD4", Icon: Wind, auto: "breathe" },
-  { id: "checkin", label: "Log your daily check-in", xp: 25, color: "#8B5CF6", Icon: MessageSquare, auto: "checkin" },
-  { id: "post", label: "Share a win in your feed", xp: 20, color: "#D97A0F", Icon: Send, auto: "post" },
-  { id: "read", label: "Read today's reflection", xp: 15, color: "#22C55E", Icon: BookOpen, auto: "read" },
-  { id: "move", label: "Move for 20 minutes", xp: 20, color: "#1FBFD4", Icon: Dumbbell },
-  { id: "reach", label: "Reach out to one person", xp: 30, color: "#E4573D", Icon: Users },
-  { id: "goal", label: "Finish one of your goals", xp: 20, color: "#F5B942", Icon: Target, auto: "goal" },
-  { id: "water", label: "Drink a full glass of water", xp: 10, color: "#4F5BFF", Icon: Sparkles },
-  { id: "outside", label: "Step outside for fresh air", xp: 15, color: "#22C55E", Icon: Wind },
-];
-
-const ACHIEVEMENTS = [
-  { id: "first-pledge", label: "First Pledge", test: (d) => d.pledgeDates.length >= 1 },
-  { id: "pledge-7", label: "7 Pledges", test: (d) => d.pledgeDates.length >= 7 },
-  { id: "first-breath", label: "First Breath", test: (d) => d.breathSessions.length >= 1 },
-  { id: "breath-10", label: "10 Sessions", test: (d) => d.breathSessions.length >= 10 },
-  { id: "checkin-5", label: "5 Check-ins", test: (d) => d.checkins.length >= 5 },
-  { id: "first-post", label: "First Post", test: (d) => d.posts.some((p) => !p.milestone) },
-  { id: "goal-3", label: "3 Goals Done", test: (d) => d.goals.filter((g) => g.done).length >= 3 },
-  { id: "streak-7", label: "7-Day Streak", test: (d) => streakOf(d.loginDates) >= 7 },
-  { id: "xp-500", label: "500 Sparks", test: (d) => d.xp >= 500 },
-  { id: "level-5", label: "Level 5", test: (d) => levelOf(d.xp).level >= 5 },
-];
-
-const BREATH_PRESETS = [
-  { id: "box", name: "Box Breathing", sub: "4-4-4-4 · calm and focus", color: "#4F5BFF",
-    phases: [["Breathe in", 4], ["Hold", 4], ["Breathe out", 4], ["Hold", 4]] },
-  { id: "478", name: "4-7-8 Breathing", sub: "Slow down a racing mind", color: "#8B5CF6",
-    phases: [["Breathe in", 4], ["Hold", 7], ["Breathe out", 8]] },
-  { id: "urge", name: "Urge Surfing", sub: "Long exhales to ride out a craving", color: "#1FBFD4",
-    phases: [["Breathe in", 4], ["Breathe out", 8]] },
-  { id: "quick", name: "Quick Reset", sub: "60 seconds, anywhere", color: "#22C55E",
-    phases: [["Breathe in", 3], ["Breathe out", 5]] },
-];
-
-/* ---------------- helpers ---------------- */
-const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
-const isoOf = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
-const dayIdx = () => { const d = new Date(); return Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 864e5); };
-const fmtDate = (iso) => new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-const daysBetween = (a, b) => Math.round((new Date(b.getFullYear(), b.getMonth(), b.getDate()) - new Date(a.getFullYear(), a.getMonth(), a.getDate())) / 864e5);
-
-function streakOf(dates) {
-  if (!dates || !dates.length) return 0;
-  const set = new Set(dates);
-  let n = 0; const d = new Date();
-  if (!set.has(isoOf(d))) d.setDate(d.getDate() - 1);
-  while (set.has(isoOf(d))) { n++; d.setDate(d.getDate() - 1); }
-  return n;
-}
-
-function levelOf(xp) {
-  let i = 0;
-  for (let k = 0; k < LEVELS.length; k++) if (xp >= LEVELS[k].xp) i = k;
-  const cur = LEVELS[i], next = LEVELS[i + 1] || null;
-  const span = next ? next.xp - cur.xp : 1;
-  const into = xp - cur.xp;
-  return { level: i + 1, name: cur.name, into, span, next, pct: next ? Math.min(1, into / span) : 1 };
-}
-
-function todaysChallenges() {
-  const seed = dayIdx();
-  const pool = [...CHALLENGES];
-  const out = [];
-  for (let i = 0; i < 3; i++) out.push(pool[(seed * 7 + i * 3) % pool.length]);
-  return out.filter((c, i, a) => a.findIndex((x) => x.id === c.id) === i);
-}
-
-/* ---------------- storage ---------------- */
-const KEY = "steady:v3";
-const BLANK = {
-  quitDate: null, dailySpend: 0, xp: 0, awarded: [], goals: [], checkins: [], posts: [],
-  pledgeDates: [], loginDates: [], breathSessions: [], manualChallenges: [], readDates: [],
-  notifiedMilestones: [], earnedAchievements: [], reasons: [], resets: [],
-  perfectDates: [], chestDates: [], soundOn: true,
-};
-
-async function load() {
-  try { const raw = localStorage.getItem(KEY); if (raw) return { ...BLANK, ...JSON.parse(raw) }; }
-  catch (e) { /* first run */ }
-  return BLANK;
-}
-async function save(d) {
-  try { localStorage.setItem(KEY, JSON.stringify(d)); } catch (e) { console.error("storage", e); }
-}
-
-/* ---------------- sound ---------------- */
-let audioCtx;
-function ensureAudio() {
-  try {
-    if (!audioCtx) {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (Ctx) audioCtx = new Ctx();
-    }
-    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-    return audioCtx;
-  } catch (e) { return null; }
-}
-function playChime(freqs, dur = 0.16, type = "sine", gain = 0.05) {
-  const ctx = ensureAudio();
-  if (!ctx) return;
-  freqs.forEach((f, i) => {
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = type; osc.frequency.value = f;
-    osc.connect(g); g.connect(ctx.destination);
-    const t0 = ctx.currentTime + i * 0.07;
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.start(t0); osc.stop(t0 + dur + 0.03);
-  });
-}
-const CHIMES = {
-  spark: () => playChime([880], 0.14, "sine", 0.05),
-  level: () => playChime([523.25, 659.25, 783.99, 1046.5], 0.2, "triangle", 0.07),
-  achievement: () => playChime([659.25, 987.77, 1318.51], 0.2, "triangle", 0.06),
-  milestone: () => playChime([440, 659.25, 880, 1174.7], 0.24, "triangle", 0.07),
-  perfect: () => playChime([783.99, 987.77, 1318.51], 0.2, "sine", 0.06),
-  chest: () => playChime([659.25, 987.77], 0.16, "square", 0.045),
-};
 
 /* ---------------- confetti ---------------- */
 function Confetti({ trigger }) {
@@ -356,18 +195,19 @@ function useCountUp(target, ms = 800) {
 
 function Ring({ pct, size = 200, stroke = 14, children, from = "#5C67FF", to = "#8B5CF6" }) {
   const r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  const gid = `g${from.replace(/[^a-zA-Z0-9]/g, "")}${to.replace(/[^a-zA-Z0-9]/g, "")}`;
   return (
     <div style={{ position: "relative", width: size, height: size }}>
       <svg width={size} height={size}>
         <defs>
-          <linearGradient id={`g${from.slice(1)}${to.slice(1)}`} x1="0" y1="0" x2="1" y2="1">
+          <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor={from} /><stop offset="100%" stopColor={to} />
           </linearGradient>
         </defs>
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,.08)" strokeWidth={stroke} />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={`url(#g${from.slice(1)}${to.slice(1)})`}
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={`url(#${gid})`}
           strokeWidth={stroke} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)}
-          transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dashoffset .9s cubic-bezier(.22,1,.36,1)" }} />
+          transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dashoffset .9s cubic-bezier(.22,1,.36,1), stroke .3s" }} />
       </svg>
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
         {children}
@@ -382,6 +222,24 @@ function H2({ children, sub }) {
       <h2 style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 25, margin: 0 }}>{children}</h2>
       {sub && <p style={{ fontSize: 13, color: "var(--soft)", margin: "5px 0 0", lineHeight: 1.5 }}>{sub}</p>}
     </div>
+  );
+}
+
+function TypePicker({ value, onChange, customLabel, onCustomLabel }) {
+  return (
+    <>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: value === "custom" ? 12 : 0 }}>
+        {JOURNEY_TYPES.map((jt) => (
+          <button key={jt.id} type="button" className={`chip${value === jt.id ? " on" : ""}`}
+            onClick={() => onChange(jt.id)} style={value === jt.id ? { background: jt.color, borderColor: "transparent", color: "#fff" } : {}}>
+            <span>{jt.emoji}</span> {jt.label}
+          </button>
+        ))}
+      </div>
+      {value === "custom" && (
+        <input className="inp" value={customLabel} placeholder="Name this journey" onChange={(e) => onCustomLabel(e.target.value)} />
+      )}
+    </>
   );
 }
 
@@ -410,12 +268,150 @@ function TopBar({ xp, streak, onProfile, onSettings }) {
   );
 }
 
-/* ---------------- settings sheet ---------------- */
-function SettingsSheet({ d, onSave, onReset, onClose, onToggleSound }) {
-  const [date, setDate] = useState(d.quitDate);
-  const [spend, setSpend] = useState(String(d.dailySpend || ""));
+/* ---------------- journey switcher ---------------- */
+function JourneyBar({ journeys, activeId, onSwitch, onManage }) {
+  return (
+    <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "2px 2px 6px", marginBottom: 10 }}>
+      {journeys.map((j) => {
+        const jDays = daysSince(j.quitDate);
+        const active = j.id === activeId;
+        return (
+          <button key={j.id} onClick={() => onSwitch(j.id)} className="chip"
+            style={{ flexShrink: 0, whiteSpace: "nowrap", ...(active ? { background: j.color, color: "#fff", borderColor: "transparent" } : {}) }}>
+            <span>{j.emoji}</span> {j.label} · {jDays}d
+            {j.isPrimary && <Star size={10} fill="currentColor" />}
+          </button>
+        );
+      })}
+      <button onClick={onManage} className="chip" style={{ flexShrink: 0 }} aria-label="Manage journeys">
+        <Settings size={12} />
+      </button>
+    </div>
+  );
+}
+
+function JourneysSheet({ journeys, activeId, onSwitch, onEdit, onClose }) {
+  return (
+    <div className="overlay" style={{ alignItems: "flex-end", padding: 0 }} onClick={onClose}>
+      <div className="card fade" style={{ width: "100%", maxWidth: 480, borderRadius: "24px 24px 0 0", padding: "22px 20px 30px", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 20, marginRight: "auto" }}>Your journeys</div>
+          <button className="btn-soft" style={{ width: "auto", padding: 8 }} onClick={onClose} aria-label="Close"><X size={15} /></button>
+        </div>
+        <p style={{ fontSize: 12.5, color: "var(--soft)", margin: "0 0 16px", lineHeight: 1.5 }}>
+          Track more than one thing at a time. Each journey keeps its own start date, day count, and savings.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+          {journeys.map((j) => {
+            const jDays = daysSince(j.quitDate);
+            return (
+              <div key={j.id} className="card2" style={{
+                padding: "13px 15px", display: "flex", alignItems: "center", gap: 12,
+                border: j.id === activeId ? `1.5px solid ${j.color}` : "1px solid var(--line)",
+              }}>
+                <button onClick={() => onSwitch(j.id)} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0, color: "inherit" }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 12, background: `${j.color}26`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>{j.emoji}</div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                      {j.label}{j.isPrimary && <Star size={12} color="#F5B942" fill="#F5B942" />}
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--soft)" }}>{jDays} day{jDays === 1 ? "" : "s"}</div>
+                  </div>
+                </button>
+                <button className="btn-soft" style={{ width: "auto", padding: 8 }} onClick={() => onEdit(j)} aria-label={`Edit ${j.label}`}><Settings size={14} /></button>
+              </div>
+            );
+          })}
+        </div>
+        <button className="btn" onClick={() => onEdit(null)} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <Plus size={16} /> Add a journey
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function JourneyFormSheet({ journey, canDelete, onSave, onDelete, onSetPrimary, onReset, onClose }) {
+  const isEdit = !!journey;
+  const [type, setType] = useState(journey?.type || null);
+  const [customLabel, setCustomLabel] = useState(journey?.type === "custom" ? journey.label : "");
+  const [quitDate, setQuitDate] = useState(journey?.quitDate || todayISO());
+  const [dailySpend, setDailySpend] = useState(String(journey?.dailySpend || ""));
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
+  const chosen = JOURNEY_TYPES.find((jt) => jt.id === type);
+  const canSave = type && (type !== "custom" || customLabel.trim());
+
+  const submit = () => {
+    if (!canSave) return;
+    const label = type === "custom" ? customLabel.trim() : chosen.label;
+    onSave({ type, label, emoji: chosen.emoji, color: chosen.color, quitDate, dailySpend: Number(dailySpend) || 0 });
+    onClose();
+  };
+
+  return (
+    <div className="overlay" style={{ alignItems: "flex-end", padding: 0 }} onClick={onClose}>
+      <div className="card fade" style={{ width: "100%", maxWidth: 480, borderRadius: "24px 24px 0 0", padding: "22px 20px 30px", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 20, marginRight: "auto" }}>{isEdit ? "Edit journey" : "New journey"}</div>
+          <button className="btn-soft" style={{ width: "auto", padding: 8 }} onClick={onClose} aria-label="Close"><X size={15} /></button>
+        </div>
+
+        <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--soft)", display: "block", marginBottom: 8 }}>What are you working on?</label>
+        <div style={{ marginBottom: 14 }}>
+          <TypePicker value={type} onChange={setType} customLabel={customLabel} onCustomLabel={setCustomLabel} />
+        </div>
+
+        <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--soft)", display: "block", marginBottom: 7 }}>Start date</label>
+        <input type="date" className="inp" value={quitDate} max={todayISO()} onChange={(e) => setQuitDate(e.target.value)} />
+
+        <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--soft)", display: "block", margin: "16px 0 7px" }}>Rough daily spend before (optional)</label>
+        <input type="number" min="0" step="0.01" className="inp" value={dailySpend} placeholder="0.00" onChange={(e) => setDailySpend(e.target.value)} />
+
+        <button className="btn" style={{ marginTop: 18 }} disabled={!canSave} onClick={submit}>{isEdit ? "Save changes" : "Start this journey"}</button>
+
+        {isEdit && (
+          <>
+            <div style={{ height: 1, background: "var(--line)", margin: "22px 0 18px" }} />
+            {!journey.isPrimary && (
+              <button className="btn-soft" style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }} onClick={() => onSetPrimary(journey.id)}>
+                <Star size={15} /> Make this my primary journey
+              </button>
+            )}
+            <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 600, fontSize: 15.5, marginBottom: 6 }}>Start the count again</div>
+            <p style={{ fontSize: 13, color: "var(--soft)", lineHeight: 1.6, margin: "0 0 14px" }}>
+              Resetting this journey's timer isn't erasing your progress — sparks, badges, and everything you've built stay exactly where they are.
+            </p>
+            {!confirmReset ? (
+              <button className="btn-soft" onClick={() => setConfirmReset(true)} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 14 }}>
+                <RotateCcw size={15} /> Reset this timer to today
+              </button>
+            ) : (
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                <button className="btn-soft" onClick={() => setConfirmReset(false)}>Cancel</button>
+                <button className="btn" onClick={() => { onReset(journey.id); onClose(); }}>Yes, start today</button>
+              </div>
+            )}
+            {canDelete && (
+              !confirmDelete ? (
+                <button className="btn-soft" style={{ color: "var(--red)", borderColor: "rgba(228,87,61,.4)" }} onClick={() => setConfirmDelete(true)}>Delete this journey</button>
+              ) : (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn-soft" onClick={() => setConfirmDelete(false)}>Cancel</button>
+                  <button className="btn" style={{ background: "linear-gradient(135deg,#E4573D,#C0392B)" }} onClick={() => { onDelete(journey.id); onClose(); }}>Delete for good</button>
+                </div>
+              )
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- settings sheet ---------------- */
+function SettingsSheet({ soundOn, onToggleSound, onManageJourneys, onClose }) {
   return (
     <div className="overlay" style={{ alignItems: "flex-end", padding: 0 }} onClick={onClose}>
       <div className="card fade" style={{ width: "100%", maxWidth: 480, borderRadius: "24px 24px 0 0", padding: "22px 20px 30px", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
@@ -424,53 +420,26 @@ function SettingsSheet({ d, onSave, onReset, onClose, onToggleSound }) {
           <button className="btn-soft" style={{ width: "auto", padding: 8 }} onClick={onClose} aria-label="Close"><X size={15} /></button>
         </div>
 
-        <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--soft)", display: "block", marginBottom: 7 }}>Sober date</label>
-        <input type="date" className="inp" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} />
+        <button className="btn-soft" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 18 }} onClick={onManageJourneys}>
+          <Compass size={15} /> Manage your journeys
+        </button>
 
-        <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--soft)", display: "block", margin: "16px 0 7px" }}>Daily spend before (for savings)</label>
-        <input type="number" min="0" step="0.01" className="inp" value={spend} placeholder="0.00" onChange={(e) => setSpend(e.target.value)} />
-
-        <button className="btn" style={{ marginTop: 18 }} onClick={() => { onSave(date, Number(spend) || 0); onClose(); }}>Save changes</button>
-
-        <div style={{ height: 1, background: "var(--line)", margin: "22px 0 18px" }} />
+        <div style={{ height: 1, background: "var(--line)", margin: "0 0 18px" }} />
 
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {d.soundOn ? <Volume2 size={17} color="var(--indigo-lt)" /> : <VolumeX size={17} color="var(--soft)" />}
+          {soundOn ? <Volume2 size={17} color="var(--indigo-lt)" /> : <VolumeX size={17} color="var(--soft)" />}
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 600, fontSize: 14.5 }}>Sound effects</div>
             <div style={{ fontSize: 12, color: "var(--soft)" }}>Chimes for sparks, levels, and chests</div>
           </div>
-          <button className={`switch${d.soundOn ? " on" : ""}`} role="switch" aria-checked={d.soundOn} aria-label="Toggle sound effects" onClick={() => onToggleSound(!d.soundOn)} />
+          <button className={`switch${soundOn ? " on" : ""}`} role="switch" aria-checked={soundOn} aria-label="Toggle sound effects" onClick={() => onToggleSound(!soundOn)} />
         </div>
-
-        <div style={{ height: 1, background: "var(--line)", margin: "18px 0" }} />
-
-        <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 600, fontSize: 15.5, marginBottom: 6 }}>Start the count again</div>
-        <p style={{ fontSize: 13, color: "var(--soft)", lineHeight: 1.6, margin: "0 0 14px" }}>
-          If you drank or used, resetting the timer isn't erasing your progress — your sparks, badges, journal, and everything you learned stay exactly where they are. Days are just a number. Come back and keep going.
-        </p>
-        {!confirmReset ? (
-          <button className="btn-soft" onClick={() => setConfirmReset(true)} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <RotateCcw size={15} /> Reset my timer to today
-          </button>
-        ) : (
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn-soft" onClick={() => setConfirmReset(false)}>Cancel</button>
-            <button className="btn" onClick={() => { onReset(); onClose(); }}>Yes, start today</button>
-          </div>
-        )}
-
-        {d.resets.length > 0 && (
-          <p style={{ fontSize: 12, color: "var(--soft)", marginTop: 14, lineHeight: 1.6 }}>
-            You've restarted {d.resets.length} time{d.resets.length === 1 ? "" : "s"} and you're still here. That counts for something.
-          </p>
-        )}
       </div>
     </div>
   );
 }
 
-/* ---------------- readings library ---------------- */
+/* ---------------- readings & practices libraries ---------------- */
 function ReadingsSheet({ onClose }) {
   const [open, setOpen] = useState(dayIdx() % READINGS.length);
   return (
@@ -499,11 +468,39 @@ function ReadingsSheet({ onClose }) {
   );
 }
 
+function PracticesSheet({ onClose }) {
+  const [open, setOpen] = useState(dayIdx() % PRACTICES.length);
+  return (
+    <div className="overlay" style={{ alignItems: "flex-end", padding: 0 }} onClick={onClose}>
+      <div className="card fade" style={{ width: "100%", maxWidth: 480, borderRadius: "24px 24px 0 0", padding: "22px 20px 30px", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
+          <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 20, marginRight: "auto" }}>Daily practices</div>
+          <button className="btn-soft" style={{ width: "auto", padding: 8 }} onClick={onClose} aria-label="Close"><X size={15} /></button>
+        </div>
+        <p style={{ fontSize: 12.5, color: "var(--soft)", margin: "0 0 16px", lineHeight: 1.5 }}>
+          One of these rotates in as today's practice. Small and concrete, aimed at how you actually feel — not just the streak.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {PRACTICES.map((r, i) => (
+            <div key={i} className="card2" style={{ padding: "14px 16px", cursor: "pointer", borderColor: i === open ? "var(--indigo)" : "var(--line)" }} onClick={() => setOpen(i === open ? -1 : i)}>
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 600, fontSize: 15, marginRight: "auto" }}>{r.t}</div>
+                <ChevronDown size={16} color="var(--indigo-lt)" style={{ transform: i === open ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+              </div>
+              {i === open && <div style={{ fontSize: 13.5, color: "var(--soft)", lineHeight: 1.65, marginTop: 9 }}>{r.b}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- my why ---------------- */
 function WhyCard({ reasons, setReasons }) {
   const [adding, setAdding] = useState(false);
   const [text, setText] = useState("");
-  const add = () => { if (!text.trim()) return; setReasons([...reasons, { id: Date.now(), text: text.trim() }]); setText(""); setAdding(false); };
+  const add = () => { if (!text.trim()) return; setReasons([...reasons, { id: uid("reason"), text: text.trim() }]); setText(""); setAdding(false); };
 
   return (
     <div className="card" style={{ padding: "18px", marginBottom: 12 }}>
@@ -578,6 +575,47 @@ function LevelUp({ lv, onClose }) {
   );
 }
 
+/* ---------------- chest reward / share card modal ---------------- */
+function ChestReward({ reward, journey, days, onClose }) {
+  const canvasRef = useRef(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReady(false);
+    (async () => {
+      if (!canvasRef.current) return;
+      await drawRewardCard(canvasRef.current, reward, { journeyLabel: journey?.label, days });
+      if (!cancelled) setReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [reward, journey, days]);
+
+  const heading = reward.kind === "badge" ? "New badge!"
+    : reward.kind === "meme" ? "A little something"
+    : reward.kind === "progress" ? "Share your progress"
+    : "Your affirmation";
+  const filename = `steady-${reward.kind}-${todayISO()}.png`;
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="card pop" style={{ padding: "22px 20px 26px", textAlign: "center", maxWidth: 360, width: "100%" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 18, marginBottom: 4 }}>{heading}</div>
+        <div style={{ fontSize: 12.5, color: "var(--soft)", marginBottom: 16 }}>
+          {reward.kind === "progress" ? "A card worth sharing" : "From today's mystery chest"}
+        </div>
+        <div style={{ borderRadius: 18, overflow: "hidden", marginBottom: 16, background: "#0B1437" }}>
+          <canvas ref={canvasRef} width={CARD_SIZE} height={CARD_SIZE} style={{ width: "100%", height: "auto", display: "block" }} />
+        </div>
+        <button className="btn-soft" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginBottom: 8 }} disabled={!ready} onClick={() => shareOrDownload(canvasRef.current, filename)}>
+          <Share2 size={15} /> Save / share image
+        </button>
+        <button className="btn" onClick={onClose}>Nice</button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- crisis modal ---------------- */
 function Crisis({ onClose }) {
   return (
@@ -609,8 +647,21 @@ function Crisis({ onClose }) {
 
 /* ---------------- onboarding ---------------- */
 function Onboarding({ onDone }) {
+  const [type, setType] = useState(null);
+  const [customLabel, setCustomLabel] = useState("");
   const [date, setDate] = useState(todayISO());
   const [spend, setSpend] = useState("");
+  const chosen = JOURNEY_TYPES.find((jt) => jt.id === type);
+  const canBegin = type && (type !== "custom" || customLabel.trim());
+
+  const begin = () => {
+    if (!canBegin) return;
+    onDone({
+      type, label: type === "custom" ? customLabel.trim() : chosen.label,
+      emoji: chosen.emoji, color: chosen.color, quitDate: date, dailySpend: Number(spend) || 0,
+    });
+  };
+
   return (
     <div className="root fade" style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: 24 }}>
       <div className="aurora" />
@@ -621,15 +672,19 @@ function Onboarding({ onDone }) {
         <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 2.5, color: "var(--indigo-lt)", textTransform: "uppercase" }}>Steady</div>
         <h1 style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 800, fontSize: 32, margin: "8px 0 10px", lineHeight: 1.15 }}>Let's mark your first day.</h1>
         <p style={{ color: "var(--soft)", fontSize: 14.5, lineHeight: 1.6, margin: "0 0 22px" }}>
-          Set your sober date to start the timer. Everything else — streaks, challenges, levels — builds from here.
+          Start with one journey — you can add more anytime, each with its own start date and day count.
         </p>
         <div className="card" style={{ padding: 18, marginBottom: 18 }}>
-          <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--soft)", display: "block", marginBottom: 7 }}>Sobriety date</label>
+          <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--soft)", display: "block", marginBottom: 8 }}>What are you working on?</label>
+          <div style={{ marginBottom: 16 }}>
+            <TypePicker value={type} onChange={setType} customLabel={customLabel} onCustomLabel={setCustomLabel} />
+          </div>
+          <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--soft)", display: "block", marginBottom: 7 }}>Start date</label>
           <input type="date" className="inp" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} />
           <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--soft)", display: "block", margin: "16px 0 7px" }}>Rough daily spend before (optional)</label>
           <input type="number" min="0" step="0.01" className="inp" placeholder="0.00" value={spend} onChange={(e) => setSpend(e.target.value)} />
         </div>
-        <button className="btn" onClick={() => onDone(date, Number(spend) || 0)}>Begin</button>
+        <button className="btn" disabled={!canBegin} onClick={begin}>Begin</button>
         <p style={{ fontSize: 12, color: "var(--soft)", marginTop: 16, lineHeight: 1.6 }}>
           A companion for tracking your own progress — it works alongside a sponsor, a support group, or a counselor, not instead of one.
         </p>
@@ -639,18 +694,20 @@ function Onboarding({ onDone }) {
 }
 
 /* ---------------- HOME ---------------- */
-function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead, onOpenChest, setReasons, openReadings, go, openCrisis }) {
+function HomeTab({ d, days, live, challengeState, journeys, activeJourney, onSwitchJourney, onManageJourneys,
+  onChallenge, onPledge, onRead, onOpenChest, onShareProgress, setReasons, openReadings, openPractices, go, openCrisis }) {
   const next = MILESTONES.find((m) => m.d > days) || MILESTONES[MILESTONES.length - 1];
   const prev = [...MILESTONES].reverse().find((m) => m.d <= days);
   const lo = prev ? prev.d : 0;
   const pct = Math.min(1, Math.max(0, (days - lo) / (next.d - lo || 1)));
   const reading = READINGS[dayIdx() % READINGS.length];
   const quote = QUOTES[dayIdx() % QUOTES.length];
+  const practice = PRACTICES[dayIdx() % PRACTICES.length];
   const animDays = useCountUp(days);
   const pledged = d.pledgeDates.includes(todayISO());
   const done = challengeState.filter((c) => c.done).length;
   const badges = MILESTONES.filter((m) => m.d <= days).length;
-  const saved = Math.round(days * d.dailySpend);
+  const saved = Math.round(days * (activeJourney?.dailySpend || 0));
   const chestOpened = d.chestDates.includes(todayISO());
   const perfectToday = challengeState.length > 0 && done === challengeState.length;
   const week = useMemo(() => {
@@ -661,11 +718,13 @@ function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead,
 
   return (
     <div className="fade" style={{ padding: "6px 18px 8px" }}>
+      <JourneyBar journeys={journeys} activeId={activeJourney?.id} onSwitch={onSwitchJourney} onManage={onManageJourneys} />
+
       {/* timer */}
       <div className="card" style={{ padding: "24px 18px 22px", display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 12 }}>
-        <Ring pct={pct} size={206}>
+        <Ring pct={pct} size={206} from={activeJourney?.color || "#5C67FF"}>
           <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 800, fontSize: 52, lineHeight: 1 }}>{animDays}</div>
-          <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--soft)", letterSpacing: 1 }}>{days === 1 ? "DAY SOBER" : "DAYS SOBER"}</div>
+          <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--soft)", letterSpacing: 1 }}>{days === 1 ? "DAY FREE" : "DAYS FREE"}</div>
         </Ring>
         <div style={{ display: "flex", gap: 7, marginTop: 14, flexWrap: "wrap", justifyContent: "center" }}>
           {[[live.h, "hrs", "#1FBFD4"], [live.m, "min", "#D97A0F"], [live.s, "sec", "#8B5CF6"]].map(([v, l, c]) => (
@@ -689,7 +748,7 @@ function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead,
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         {[[Clock, "#8A92FF", (days * 24).toLocaleString(), "HOURS"],
           [Award, "#F5B942", badges, "BADGES"],
-          ...(d.dailySpend > 0 ? [[DollarSign, "#22C55E", saved.toLocaleString(), "SAVED"]] : [])].map(([Ic, c, v, l], i) => (
+          ...(activeJourney?.dailySpend > 0 ? [[DollarSign, "#22C55E", saved.toLocaleString(), "SAVED"]] : [])].map(([Ic, c, v, l], i) => (
           <div className="tile" key={i}>
             <Ic size={16} color={c} />
             <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 17, marginTop: 3 }}>{v}</div>
@@ -698,9 +757,13 @@ function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead,
         ))}
       </div>
 
-      {/* pledge */}
+      <button className="btn-soft" style={{ marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }} onClick={onShareProgress}>
+        <Share2 size={14} /> Share your progress
+      </button>
+
+      {/* practice pledge */}
       <button onClick={onPledge} className="card" style={{
-        width: "100%", display: "flex", alignItems: "center", gap: 13, padding: "16px 18px", marginBottom: 12, cursor: "pointer",
+        width: "100%", display: "flex", alignItems: "center", gap: 13, padding: "16px 18px", marginBottom: 8, cursor: "pointer",
         border: pledged ? "none" : "1px solid var(--line)", background: pledged ? "linear-gradient(135deg,#5C67FF,#8B5CF6)" : "var(--card)", textAlign: "left",
       }}>
         <div style={{ width: 42, height: 42, borderRadius: "50%", background: pledged ? "rgba(255,255,255,.22)" : "rgba(79,91,255,.18)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -708,14 +771,15 @@ function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead,
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 600, fontSize: 15, color: "#fff" }}>
-            {pledged ? "Pledge taken today ✓" : "Take today's pledge"}
+            {pledged ? "Practice complete ✓" : practice.t}
           </div>
           <div style={{ fontSize: 12, color: pledged ? "rgba(255,255,255,.85)" : "var(--soft)" }}>
-            {pledged ? "See you tomorrow for the next one" : "One tap. +20 sparks."}
+            {pledged ? "See you tomorrow for the next one" : practice.b}
           </div>
         </div>
         {!pledged && <div className="pill" style={{ background: "rgba(245,185,66,.15)", border: "none", color: "#F5B942" }}>+20</div>}
       </button>
+      <button className="btn-soft" style={{ marginBottom: 12 }} onClick={openPractices}>Browse all practices</button>
 
       {/* mystery chest */}
       <div className="card" style={{
@@ -734,7 +798,7 @@ function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead,
             {chestOpened ? "Chest opened today" : "Today's mystery chest"}
           </div>
           <div style={{ fontSize: 12, color: "var(--soft)" }}>
-            {chestOpened ? "A fresh one unlocks tomorrow" : "Tap for a surprise spark bonus"}
+            {chestOpened ? "A fresh one unlocks tomorrow" : "Sparks, an affirmation, a meme, or a badge"}
           </div>
         </div>
         {!chestOpened && <button className="btn" style={{ width: "auto", padding: "10px 18px" }} onClick={onOpenChest}>Open</button>}
@@ -978,10 +1042,10 @@ function BreatheTab({ sessions, onComplete }) {
 }
 
 /* ---------------- QUESTS ---------------- */
-function QuestsTab({ d, days, goals, setGoals }) {
+function QuestsTab({ d, days, activeJourney, goals, setGoals }) {
   const lv = levelOf(d.xp);
   const [text, setText] = useState("");
-  const add = () => { if (!text.trim()) return; setGoals([{ id: Date.now(), text: text.trim(), done: false }, ...goals]); setText(""); };
+  const add = () => { if (!text.trim()) return; setGoals([{ id: uid("goal"), text: text.trim(), done: false }, ...goals]); setText(""); };
 
   return (
     <div className="fade" style={{ padding: "10px 18px 8px" }}>
@@ -1006,7 +1070,7 @@ function QuestsTab({ d, days, goals, setGoals }) {
       {/* streaks */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         {[["Login streak", streakOf(d.loginDates), Flame, "#F5B942"],
-          ["Pledge streak", streakOf(d.pledgeDates), HandHeart, "#8B5CF6"],
+          ["Practice streak", streakOf(d.pledgeDates), HandHeart, "#8B5CF6"],
           ["Check-in streak", streakOf(d.checkins.map((c) => c.date)), MessageSquare, "#1FBFD4"],
           ["Perfect streak", streakOf(d.perfectDates), Zap, "#22C55E"]].map(([l, v, Ic, c]) => (
           <div className="tile" key={l} style={{ minWidth: 84 }}>
@@ -1018,7 +1082,7 @@ function QuestsTab({ d, days, goals, setGoals }) {
       </div>
 
       {/* milestone badges */}
-      <H2 sub="Unlocked automatically as your timer grows.">Milestones</H2>
+      <H2 sub={`Unlocked automatically as ${activeJourney ? activeJourney.label : "your"} timer grows.`}>Milestones</H2>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 9, marginBottom: 24 }}>
         {MILESTONES.map((m) => {
           const on = days >= m.d;
@@ -1040,6 +1104,20 @@ function QuestsTab({ d, days, goals, setGoals }) {
             <div key={a.id} className={`badge${on ? " on" : ""}`} style={on ? { background: "linear-gradient(150deg,#F5B942,#D97A0F)" } : {}}>
               {on ? <Trophy size={20} /> : <Lock size={16} />}
               <div style={{ fontSize: 9.5, fontWeight: 700, textAlign: "center", lineHeight: 1.2 }}>{a.label}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* chest badges */}
+      <H2 sub="Collectible surprises from the daily mystery chest.">Badge Collection</H2>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 9, marginBottom: 24 }}>
+        {CHEST_BADGES.map((b) => {
+          const on = d.chestBadges.includes(b.id);
+          return (
+            <div key={b.id} className={`badge${on ? " on" : ""}`} style={on ? { background: `linear-gradient(150deg,${b.color},${b.color}99)` } : {}}>
+              {on ? <span style={{ fontSize: 22, lineHeight: 1 }}>{b.emoji}</span> : <Lock size={16} />}
+              <div style={{ fontSize: 9.5, fontWeight: 700, textAlign: "center", lineHeight: 1.2 }}>{b.label}</div>
             </div>
           );
         })}
@@ -1068,18 +1146,12 @@ function QuestsTab({ d, days, goals, setGoals }) {
 }
 
 /* ---------------- FEED ---------------- */
-const TAGS = [
-  { id: "grateful", label: "Grateful", Icon: Heart, color: "#E4573D" },
-  { id: "proud", label: "Proud", Icon: Star, color: "#F5B942" },
-  { id: "hard", label: "Hard day", Icon: CloudRain, color: "#8B5CF6" },
-];
-
 function FeedTab({ posts, setPosts, onPost }) {
   const [text, setText] = useState("");
   const [tag, setTag] = useState(null);
   const share = () => {
     if (!text.trim()) return;
-    setPosts([{ id: Date.now(), date: new Date().toISOString(), text: text.trim(), tag, milestone: false }, ...posts]);
+    setPosts([{ id: uid("post"), date: new Date().toISOString(), text: text.trim(), tag, milestone: false }, ...posts]);
     setText(""); setTag(null); onPost();
   };
   const rel = (iso) => {
@@ -1098,10 +1170,10 @@ function FeedTab({ posts, setPosts, onPost }) {
           placeholder="What's on your mind today?" style={{ border: "none", background: "transparent", resize: "none", padding: "4px 2px", fontFamily: "'Inter',sans-serif" }} />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
           <div style={{ display: "flex", gap: 6 }}>
-            {TAGS.map((t) => (
-              <button key={t.id} className="chip" onClick={() => setTag(tag === t.id ? null : t.id)}
-                style={tag === t.id ? { background: t.color, color: "#fff", borderColor: "transparent" } : {}}>
-                <t.Icon size={12} /> {t.label}
+            {TAGS.map((tg) => (
+              <button key={tg.id} className="chip" onClick={() => setTag(tag === tg.id ? null : tg.id)}
+                style={tag === tg.id ? { background: tg.color, color: "#fff", borderColor: "transparent" } : {}}>
+                <tg.Icon size={12} /> {tg.label}
               </button>
             ))}
           </div>
@@ -1115,7 +1187,7 @@ function FeedTab({ posts, setPosts, onPost }) {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
         {posts.map((p) => {
-          const t = TAGS.find((x) => x.id === p.tag);
+          const tg = TAGS.find((x) => x.id === p.tag);
           return (
             <div key={p.id} className="card pop" style={{ padding: "14px 16px", ...(p.milestone ? { background: "linear-gradient(135deg,#5C67FF,#8B5CF6)", border: "none" } : {}) }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
@@ -1126,7 +1198,7 @@ function FeedTab({ posts, setPosts, onPost }) {
                   <div style={{ fontWeight: 700, fontSize: 13 }}>{p.milestone ? "Milestone" : "You"}</div>
                   <div style={{ fontSize: 11, color: p.milestone ? "rgba(255,255,255,.8)" : "var(--soft)" }}>{rel(p.date)}</div>
                 </div>
-                {t && !p.milestone && <span className="chip" style={{ background: t.color, color: "#fff", borderColor: "transparent" }}><t.Icon size={11} />{t.label}</span>}
+                {tg && !p.milestone && <span className="chip" style={{ background: tg.color, color: "#fff", borderColor: "transparent" }}><tg.Icon size={11} />{tg.label}</span>}
                 {!p.milestone && <button className="btn-soft" style={{ width: "auto", padding: 7 }} onClick={() => setPosts(posts.filter((x) => x.id !== p.id))}><Trash2 size={13} /></button>}
               </div>
               <div style={{ fontSize: 14, lineHeight: 1.55, fontWeight: p.milestone ? 600 : 400, fontFamily: p.milestone ? "'Poppins',sans-serif" : "'Inter',sans-serif" }}>{p.text}</div>
@@ -1187,9 +1259,6 @@ function MeetingsTab({ openCrisis }) {
 }
 
 /* ---------------- CHECK-IN ---------------- */
-const MOODS = ["Steady", "Anxious", "Low", "Restless", "Grateful", "Numb"];
-const SLEEP = ["Poor", "Okay", "Good"];
-
 function CheckinTab({ checkins, onSave, openCrisis, goBreathe }) {
   const today = todayISO();
   const had = checkins.find((c) => c.date === today);
@@ -1282,14 +1351,18 @@ const TABS = [
 
 export default function App() {
   const [loading, setLoading] = useState(true);
-  const [d, setD] = useState(BLANK);
+  const [d, setD] = useState(null);
   const [tab, setTab] = useState("home");
   const [crisis, setCrisis] = useState(false);
   const [settings, setSettings] = useState(false);
   const [readings, setReadings] = useState(false);
+  const [practices, setPractices] = useState(false);
+  const [journeysOpen, setJourneysOpen] = useState(false);
+  const [editingJourney, setEditingJourney] = useState(undefined); // undefined=closed, null=new, obj=edit
   const [levelUp, setLevelUp] = useState(null);
   const [toast, setToast] = useState(null);
   const [achieveToast, setAchieveToast] = useState(null);
+  const [chestReward, setChestReward] = useState(null);
   const [burst, setBurst] = useState(0);
   const [live, setLive] = useState({ h: 0, m: 0, s: 0 });
 
@@ -1297,18 +1370,23 @@ export default function App() {
 
   const persist = useCallback((next) => { setD(next); save(next); }, []);
 
+  const activeJourney = useMemo(() => {
+    if (!d || !d.journeys.length) return null;
+    return d.journeys.find((j) => j.id === d.activeJourneyId) || d.journeys.find((j) => j.isPrimary) || d.journeys[0];
+  }, [d]);
+
   // live clock
   useEffect(() => {
-    if (!d.quitDate) return;
+    if (!activeJourney) return;
     const tick = () => {
-      const start = new Date(d.quitDate + "T00:00:00");
+      const start = new Date(activeJourney.quitDate + "T00:00:00");
       const ms = Date.now() - start.getTime();
       setLive({ h: Math.floor(ms / 36e5) % 24, m: Math.floor(ms / 6e4) % 60, s: Math.floor(ms / 1000) % 60 });
     };
     tick(); const id = setInterval(tick, 1000); return () => clearInterval(id);
-  }, [d.quitDate]);
+  }, [activeJourney]);
 
-  const days = d.quitDate ? Math.max(0, daysBetween(new Date(d.quitDate + "T00:00:00"), new Date())) : 0;
+  const days = activeJourney ? daysSince(activeJourney.quitDate) : 0;
 
   /* award xp once per key */
   const award = useCallback((base, amount, key, label, kind = "spark") => {
@@ -1328,47 +1406,9 @@ export default function App() {
     return next;
   }, []);
 
-  /* log a login each day */
-  useEffect(() => {
-    if (loading || !d.quitDate) return;
-    const t = todayISO();
-    if (d.loginDates.includes(t)) return;
-    let next = { ...d, loginDates: [...d.loginDates, t] };
-    next = award(next, 10, `login:${t}`, "Daily visit");
-    persist(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, d.quitDate]);
-
-  /* milestone celebration posts */
-  useEffect(() => {
-    if (loading || !d.quitDate) return;
-    const fresh = MILESTONES.filter((m) => m.d <= days && !d.notifiedMilestones.includes(m.d));
-    if (!fresh.length) return;
-    let next = {
-      ...d,
-      posts: [...fresh.map((m) => ({ id: Date.now() + m.d, date: new Date().toISOString(), text: `${m.label} sober. Another one in the log — on to the next.`, tag: null, milestone: true })), ...d.posts],
-      notifiedMilestones: [...d.notifiedMilestones, ...fresh.map((m) => m.d)],
-    };
-    fresh.forEach((m) => { next = award(next, 100, `ms:${m.d}`, `${m.label} milestone`, "milestone"); });
-    persist(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, loading]);
-
-  /* achievement unlocks */
-  useEffect(() => {
-    if (loading || !d.quitDate) return;
-    const fresh = ACHIEVEMENTS.filter((a) => a.test(d) && !d.earnedAchievements.includes(a.id));
-    if (!fresh.length) return;
-    let next = { ...d, earnedAchievements: [...d.earnedAchievements, ...fresh.map((a) => a.id)] };
-    fresh.forEach((a) => { next = award(next, 50, `ach:${a.id}`, a.label, "achievement"); });
-    setAchieveToast({ id: Date.now(), label: fresh[0].label });
-    setTimeout(() => setAchieveToast(null), 2600);
-    persist(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.xp, d.pledgeDates.length, d.breathSessions.length, d.checkins.length, d.loginDates.length, d.goals, loading]);
-
   /* challenge state (auto-detect + manual) */
   const challengeState = useMemo(() => {
+    if (!d) return [];
     const t = todayISO();
     return todaysChallenges().map((c) => {
       let done = d.manualChallenges.includes(`${t}:${c.id}`);
@@ -1384,29 +1424,63 @@ export default function App() {
     });
   }, [d]);
 
-  /* perfect-day bonus: every daily challenge cleared */
+  /* Daily login, milestone celebrations, the perfect-day bonus, and achievement
+     unlocks are evaluated together in one effect rather than four separate ones.
+     Each used to read the same outer `d` and call persist() with a plain object;
+     whenever two of them qualified in the same commit (e.g. adding a backdated
+     journey instantly clears a milestone AND the Multi-Tracker achievement),
+     the second persist() silently clobbered the first's update — XP would be
+     awarded but the milestone's celebration post would vanish. Threading a
+     single `next` through all four checks makes that impossible. */
   useEffect(() => {
-    if (loading || !d.quitDate || !challengeState.length) return;
+    if (loading || !d || !activeJourney) return;
     const t = todayISO();
-    if (d.perfectDates.includes(t)) return;
-    if (challengeState.some((c) => !c.done)) return;
-    let next = { ...d, perfectDates: [...d.perfectDates, t] };
-    next = award(next, 30, `perfect:${t}`, "Perfect day", "perfect");
-    persist(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [challengeState, loading]);
+    let next = d;
+    let changed = false;
 
-  /* actions */
-  const t = todayISO();
-  const doPledge = () => {
-    if (d.pledgeDates.includes(t)) return persist({ ...d, pledgeDates: d.pledgeDates.filter((x) => x !== t) });
-    persist(award({ ...d, pledgeDates: [...d.pledgeDates, t] }, 20, `pledge:${t}`, "Pledge taken"));
-  };
-  const doChallenge = (c) => {
-    if (c.done) return;
-    persist(award({ ...d, manualChallenges: [...d.manualChallenges, `${t}:${c.id}`] }, c.xp, `chal:${t}:${c.id}`, c.label));
-  };
-  const doRead = () => persist(award({ ...d, readDates: [...d.readDates, t] }, 15, `read:${t}`, "Reading done"));
+    if (!next.loginDates.includes(t)) {
+      next = { ...next, loginDates: [...next.loginDates, t] };
+      next = award(next, 10, `login:${t}`, "Daily visit");
+      changed = true;
+    }
+
+    const aj = next.journeys.find((j) => j.id === activeJourney.id);
+    if (aj) {
+      const freshMs = MILESTONES.filter((m) => m.d <= days && !aj.notifiedMilestones.includes(m.d));
+      if (freshMs.length) {
+        const journeys = next.journeys.map((j) => j.id === aj.id
+          ? { ...j, notifiedMilestones: [...j.notifiedMilestones, ...freshMs.map((m) => m.d)] }
+          : j);
+        next = {
+          ...next, journeys,
+          posts: [...freshMs.map((m) => ({ id: uid("post"), date: new Date().toISOString(), text: `${m.label} ${aj.label.toLowerCase()}-free. Another one in the log — on to the next.`, tag: null, milestone: true })), ...next.posts],
+        };
+        freshMs.forEach((m) => { next = award(next, 100, `ms:${aj.id}:${m.d}`, `${m.label} · ${aj.label}`, "milestone"); });
+        changed = true;
+      }
+    }
+
+    if (challengeState.length && !challengeState.some((c) => !c.done) && !next.perfectDates.includes(t)) {
+      next = { ...next, perfectDates: [...next.perfectDates, t] };
+      next = award(next, 30, `perfect:${t}`, "Perfect day", "perfect");
+      changed = true;
+    }
+
+    const freshAch = ACHIEVEMENTS.filter((a) => a.test(next) && !next.earnedAchievements.includes(a.id));
+    if (freshAch.length) {
+      next = { ...next, earnedAchievements: [...next.earnedAchievements, ...freshAch.map((a) => a.id)] };
+      freshAch.forEach((a) => { next = award(next, 50, `ach:${a.id}`, a.label, "achievement"); });
+      setAchieveToast({ id: Date.now(), label: freshAch[0].label });
+      setTimeout(() => setAchieveToast(null), 2600);
+      changed = true;
+    }
+
+    if (changed) persist(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, activeJourney && activeJourney.id, days, challengeState, d]);
+
+  /* breathing sessions are logged via a functional setD update since the running
+     timer inside BreatheTab can complete well after this closure was created */
   const doBreath = useCallback((preset, secs) => {
     setD((cur) => {
       const next = award({ ...cur, breathSessions: [...cur.breathSessions, { date: todayISO(), preset: preset.id, secs }] },
@@ -1414,6 +1488,20 @@ export default function App() {
       save(next); return next;
     });
   }, [award]);
+
+  if (loading || !d) return <div className="root"><style>{CSS}</style></div>;
+
+  /* actions */
+  const t = todayISO();
+  const doPledge = () => {
+    if (d.pledgeDates.includes(t)) return persist({ ...d, pledgeDates: d.pledgeDates.filter((x) => x !== t) });
+    persist(award({ ...d, pledgeDates: [...d.pledgeDates, t] }, 20, `pledge:${t}`, "Practice complete"));
+  };
+  const doChallenge = (c) => {
+    if (c.done) return;
+    persist(award({ ...d, manualChallenges: [...d.manualChallenges, `${t}:${c.id}`] }, c.xp, `chal:${t}:${c.id}`, c.label));
+  };
+  const doRead = () => persist(award({ ...d, readDates: [...d.readDates, t] }, 15, `read:${t}`, "Reading done"));
   const doCheckin = (entry) => {
     const rest = d.checkins.filter((c) => c.date !== entry.date);
     persist(award({ ...d, checkins: [entry, ...rest].sort((a, b) => (a.date < b.date ? 1 : -1)) }, 25, `checkin:${entry.date}`, "Check-in logged"));
@@ -1421,9 +1509,19 @@ export default function App() {
   const doPost = () => persist(award({ ...d }, 20, `post:${t}`, "Shared a win"));
   const doChest = () => {
     if (d.chestDates.includes(t)) return;
-    const amount = 10 + Math.floor(Math.random() * 31);
-    persist(award({ ...d, chestDates: [...d.chestDates, t] }, amount, `chest:${t}`, "Mystery chest", "chest"));
+    const reward = pickChestReward(d.chestBadges);
+    let next = { ...d, chestDates: [...d.chestDates, t] };
+    if (reward.kind === "badge") next = { ...next, chestBadges: [...next.chestBadges, reward.badge.id] };
+    const label = reward.kind === "sparks" ? "Mystery chest"
+      : reward.kind === "badge" ? `${reward.badge.label} badge`
+      : reward.kind === "meme" ? "A little something"
+      : "An affirmation";
+    const amount = reward.kind === "sparks" ? reward.amount : 15;
+    next = award(next, amount, `chest:${t}`, label, "chest");
+    persist(next);
+    if (reward.kind !== "sparks") setChestReward(reward);
   };
+  const shareProgress = () => setChestReward({ kind: "progress" });
   const toggleSound = (on) => persist({ ...d, soundOn: on });
   const setGoals = (goals) => {
     const newlyDone = goals.filter((g) => g.done && !d.goals.find((x) => x.id === g.id && x.done));
@@ -1433,16 +1531,35 @@ export default function App() {
   };
   const setPosts = (posts) => persist({ ...d, posts });
   const setReasons = (reasons) => persist({ ...d, reasons });
-  const saveSettings = (date, spend) => persist({ ...d, quitDate: date, dailySpend: spend });
-  const resetTimer = () => persist({
-    ...d,
-    quitDate: todayISO(),
-    resets: [...d.resets, todayISO()],
-    notifiedMilestones: [], // milestones can be celebrated again; sparks and badges are untouched
-  });
 
-  if (loading) return <div className="root"><style>{CSS}</style></div>;
-  if (!d.quitDate) return (<><style>{CSS}</style><Onboarding onDone={(date, spend) => persist({ ...d, quitDate: date, dailySpend: spend })} /></>);
+  /* journeys */
+  const addJourney = (draft) => {
+    const journey = newJourney(draft, d.journeys.length === 0);
+    persist({ ...d, journeys: [...d.journeys, journey], activeJourneyId: journey.id });
+  };
+  const updateJourney = (id, patch) => persist({ ...d, journeys: d.journeys.map((j) => (j.id === id ? { ...j, ...patch } : j)) });
+  const setPrimaryJourney = (id) => persist({ ...d, journeys: d.journeys.map((j) => ({ ...j, isPrimary: j.id === id })) });
+  const resetJourney = (id) => {
+    const rt = todayISO();
+    persist({ ...d, journeys: d.journeys.map((j) => (j.id === id ? { ...j, quitDate: rt, resets: [...j.resets, rt], notifiedMilestones: [] } : j)) });
+  };
+  const deleteJourney = (id) => {
+    if (d.journeys.length <= 1) return;
+    let remaining = d.journeys.filter((j) => j.id !== id);
+    if (!remaining.some((j) => j.isPrimary)) remaining = remaining.map((j, i) => (i === 0 ? { ...j, isPrimary: true } : j));
+    const nextActive = d.activeJourneyId === id ? (remaining.find((j) => j.isPrimary) || remaining[0]).id : d.activeJourneyId;
+    persist({ ...d, journeys: remaining, activeJourneyId: nextActive });
+  };
+  const switchJourney = (id) => persist({ ...d, activeJourneyId: id });
+  const openEditJourney = (j) => { setJourneysOpen(false); setEditingJourney(j); };
+  const closeEditJourney = () => { setEditingJourney(undefined); setJourneysOpen(true); };
+
+  if (!d.journeys.length) {
+    return (<><style>{CSS}</style><Onboarding onDone={(draft) => {
+      const journey = newJourney(draft, true);
+      persist({ ...d, journeys: [journey], activeJourneyId: journey.id });
+    }} /></>);
+  }
 
   const lv = levelOf(d.xp);
 
@@ -1457,9 +1574,10 @@ export default function App() {
           <div style={{ height: "100%", width: `${lv.pct * 100}%`, background: "linear-gradient(90deg,#5C67FF,#8B5CF6)", borderRadius: 999, transition: "width .6s cubic-bezier(.22,1,.36,1)" }} />
         </div>
         {tab === "home" && <HomeTab d={d} days={days} live={live} challengeState={challengeState}
-          onChallenge={doChallenge} onPledge={doPledge} onRead={doRead} onOpenChest={doChest} setReasons={setReasons}
-          openReadings={() => setReadings(true)} go={setTab} openCrisis={() => setCrisis(true)} />}
-        {tab === "quests" && <QuestsTab d={d} days={days} goals={d.goals} setGoals={setGoals} />}
+          journeys={d.journeys} activeJourney={activeJourney} onSwitchJourney={switchJourney} onManageJourneys={() => setJourneysOpen(true)}
+          onChallenge={doChallenge} onPledge={doPledge} onRead={doRead} onOpenChest={doChest} onShareProgress={shareProgress}
+          setReasons={setReasons} openReadings={() => setReadings(true)} openPractices={() => setPractices(true)} go={setTab} openCrisis={() => setCrisis(true)} />}
+        {tab === "quests" && <QuestsTab d={d} days={days} activeJourney={activeJourney} goals={d.goals} setGoals={setGoals} />}
         {tab === "breathe" && <BreatheTab sessions={d.breathSessions} onComplete={doBreath} />}
         {tab === "feed" && <FeedTab posts={d.posts} setPosts={setPosts} onPost={doPost} />}
         {tab === "meetings" && <MeetingsTab openCrisis={() => setCrisis(true)} />}
@@ -1477,7 +1595,7 @@ export default function App() {
       </div>
 
       {toast && (
-        <div key={toast.id} className="xp-float" style={{
+        <div key={`toast-${toast.id}`} className="xp-float" style={{
           position: "fixed", bottom: 110, left: "50%", transform: "translateX(-50%)", zIndex: 70,
           background: "linear-gradient(135deg,#F5B942,#D97A0F)", color: "#221703", padding: "10px 18px",
           borderRadius: 999, fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 7,
@@ -1487,7 +1605,7 @@ export default function App() {
         </div>
       )}
       {achieveToast && (
-        <div key={achieveToast.id} className="slide-down" style={{
+        <div key={`achieve-${achieveToast.id}`} className="slide-down" style={{
           position: "fixed", top: 14, left: "50%", zIndex: 75, maxWidth: 380, width: "calc(100% - 32px)",
           background: "linear-gradient(135deg,#F5B942,#D97A0F)", color: "#221703", padding: "12px 16px",
           borderRadius: 16, display: "flex", alignItems: "center", gap: 10,
@@ -1501,8 +1619,22 @@ export default function App() {
         </div>
       )}
       {levelUp && <LevelUp lv={levelUp} onClose={() => setLevelUp(null)} />}
-      {settings && <SettingsSheet d={d} onSave={saveSettings} onReset={resetTimer} onClose={() => setSettings(false)} onToggleSound={toggleSound} />}
+      {chestReward && <ChestReward reward={chestReward} journey={activeJourney} days={days} onClose={() => setChestReward(null)} />}
+      {settings && <SettingsSheet soundOn={d.soundOn} onToggleSound={toggleSound} onManageJourneys={() => { setSettings(false); setJourneysOpen(true); }} onClose={() => setSettings(false)} />}
+      {journeysOpen && <JourneysSheet journeys={d.journeys} activeId={d.activeJourneyId} onSwitch={(id) => { switchJourney(id); setJourneysOpen(false); }} onEdit={openEditJourney} onClose={() => setJourneysOpen(false)} />}
+      {editingJourney !== undefined && (
+        <JourneyFormSheet
+          journey={editingJourney}
+          canDelete={d.journeys.length > 1}
+          onSave={(draft) => { if (editingJourney) updateJourney(editingJourney.id, draft); else addJourney(draft); }}
+          onDelete={deleteJourney}
+          onSetPrimary={setPrimaryJourney}
+          onReset={resetJourney}
+          onClose={closeEditJourney}
+        />
+      )}
       {readings && <ReadingsSheet onClose={() => setReadings(false)} />}
+      {practices && <PracticesSheet onClose={() => setPractices(false)} />}
       {crisis && <Crisis onClose={() => setCrisis(false)} />}
     </div>
   );
