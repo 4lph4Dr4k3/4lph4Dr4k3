@@ -577,16 +577,22 @@ function LevelUp({ lv, onClose }) {
 
 /* ---------------- chest reward / share card modal ---------------- */
 function ChestReward({ reward, journey, days, onClose }) {
+  // drawn onto an off-screen canvas, then displayed as a plain <img> — that lets
+  // a viewer long-press-save the picture on mobile even in contexts (like a
+  // sandboxed preview) that block the share sheet and script-driven downloads
   const canvasRef = useRef(null);
-  const [ready, setReady] = useState(false);
+  const [imgSrc, setImgSrc] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    setReady(false);
+    setImgSrc(null);
     (async () => {
-      if (!canvasRef.current) return;
-      await drawRewardCard(canvasRef.current, reward, { journeyLabel: journey?.label, days });
-      if (!cancelled) setReady(true);
+      const canvas = document.createElement("canvas");
+      canvas.width = CARD_SIZE; canvas.height = CARD_SIZE;
+      await drawRewardCard(canvas, reward, { journeyLabel: journey?.label, days });
+      if (cancelled) return;
+      canvasRef.current = canvas;
+      setImgSrc(canvas.toDataURL("image/png"));
     })();
     return () => { cancelled = true; };
   }, [reward, journey, days]);
@@ -604,11 +610,12 @@ function ChestReward({ reward, journey, days, onClose }) {
         <div style={{ fontSize: 12.5, color: "var(--soft)", marginBottom: 16 }}>
           {reward.kind === "progress" ? "A card worth sharing" : "From today's mystery chest"}
         </div>
-        <div style={{ borderRadius: 18, overflow: "hidden", marginBottom: 16, background: "#0B1437" }}>
-          <canvas ref={canvasRef} width={CARD_SIZE} height={CARD_SIZE} style={{ width: "100%", height: "auto", display: "block" }} />
+        <div style={{ borderRadius: 18, overflow: "hidden", marginBottom: 8, background: "#0B1437", aspectRatio: "1" }}>
+          {imgSrc && <img src={imgSrc} alt="" style={{ width: "100%", height: "100%", display: "block" }} />}
         </div>
-        <button className="btn-soft" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginBottom: 8 }} disabled={!ready} onClick={() => shareOrDownload(canvasRef.current, filename)}>
-          <Share2 size={15} /> Save / share image
+        <p style={{ fontSize: 11.5, color: "var(--soft)", margin: "0 0 12px" }}>Press and hold the image to save it</p>
+        <button className="btn-soft" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginBottom: 8 }} disabled={!imgSrc} onClick={() => shareOrDownload(canvasRef.current, filename)}>
+          <Share2 size={15} /> Share
         </button>
         <button className="btn" onClick={onClose}>Nice</button>
       </div>
