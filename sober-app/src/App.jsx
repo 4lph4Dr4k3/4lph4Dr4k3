@@ -833,31 +833,36 @@ function HomeTab({ d, days, live, challengeState, onChallenge, onPledge, onRead,
 }
 
 /* ---------------- BREATHE ---------------- */
+const BREATH_MIN = 130, BREATH_MAX = 250;
+
 function BreatheTab({ sessions, onComplete }) {
   const [preset, setPreset] = useState(null);
   const [running, setRunning] = useState(false);
-  const [phaseI, setPhaseI] = useState(0);
-  const [left, setLeft] = useState(0);
   const [total, setTotal] = useState(60);
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(60);
+  const [orbSize, setOrbSize] = useState(BREATH_MIN);
+
+  // current phase is derived from elapsed time rather than tracked as its own state —
+  // ticking it via a nested setState (setLeft's updater calling setPhaseI) used to skip
+  // phases under React's dev-mode double-invoke of updater functions
+  const cycleLen = useMemo(() => (preset ? preset.phases.reduce((s, [, d]) => s + d, 0) : 0), [preset]);
+  const { phaseI, left } = useMemo(() => {
+    if (!preset || !cycleLen) return { phaseI: 0, left: 0 };
+    let t = elapsed % cycleLen;
+    for (let i = 0; i < preset.phases.length; i++) {
+      const d = preset.phases[i][1];
+      if (t < d) return { phaseI: i, left: d - t };
+      t -= d;
+    }
+    return { phaseI: 0, left: preset.phases[0][1] };
+  }, [preset, cycleLen, elapsed]);
 
   useEffect(() => {
     if (!running || !preset) return;
-    const id = setInterval(() => {
-      setLeft((l) => {
-        if (l > 1) return l - 1;
-        setPhaseI((p) => (p + 1) % preset.phases.length);
-        return 0;
-      });
-      setElapsed((e) => e + 1);
-    }, 1000);
+    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
   }, [running, preset]);
-
-  useEffect(() => {
-    if (running && preset) setLeft(preset.phases[phaseI][1]);
-  }, [phaseI, running, preset]);
 
   useEffect(() => {
     if (running && elapsed >= total) {
@@ -867,22 +872,44 @@ function BreatheTab({ sessions, onComplete }) {
   }, [elapsed, total, running, preset, onComplete]);
 
   const start = (p, secs) => {
-    setPreset(p); setTotal(secs); setDuration(secs); setElapsed(0); setPhaseI(0); setLeft(p.phases[0][1]); setRunning(true);
+    setPreset(p); setTotal(secs); setDuration(secs); setElapsed(0); setOrbSize(BREATH_MIN); setRunning(true);
   };
+
+  // target orb size per phase — a Hold inherits whatever size the breath was already at,
+  // so holding after an exhale stays small instead of ballooning back up
+  const phaseTargets = useMemo(() => {
+    if (!preset) return [];
+    let last = BREATH_MIN;
+    return preset.phases.map(([label]) => {
+      if (label === "Breathe in") last = BREATH_MAX;
+      else if (label === "Breathe out") last = BREATH_MIN;
+      return last;
+    });
+  }, [preset]);
+
+  // drive the orb size a beat after the phase changes so the browser has a painted
+  // starting frame to transition from — flipping style + transition-duration in the
+  // same render otherwise gets coalesced and the CSS transition never plays
+  useEffect(() => {
+    if (!running || !preset) return;
+    const target = phaseTargets[phaseI] ?? BREATH_MIN;
+    let raf2;
+    const raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => setOrbSize(target)); });
+    return () => { cancelAnimationFrame(raf1); if (raf2) cancelAnimationFrame(raf2); };
+  }, [phaseI, running, preset, phaseTargets]);
 
   if (running && preset) {
     const [label, secs] = preset.phases[phaseI];
-    const inhaling = label === "Breathe in";
     const holding = label === "Hold";
-    const size = inhaling ? 250 : holding ? 250 : 130;
+    const easing = holding ? "ease" : "cubic-bezier(.45,0,.55,1)";
     return (
       <div className="fade" style={{ padding: "10px 18px 8px", minHeight: "70vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
         <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 30, marginBottom: 6 }}>{label}</div>
         <div style={{ color: "var(--soft)", fontSize: 13, marginBottom: 34 }}>{preset.name}</div>
         <div style={{ height: 270, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div className="breath-orb" style={{
-            width: size, height: size,
-            transition: `width ${secs}s linear, height ${secs}s linear`,
+          <div className={`breath-orb${holding ? " glow-pulse" : ""}`} style={{
+            width: orbSize, height: orbSize,
+            transition: `width ${secs}s ${easing}, height ${secs}s ${easing}`,
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>
             <span style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 800, fontSize: 34, color: "#1B2455" }}>{left || secs}</span>
